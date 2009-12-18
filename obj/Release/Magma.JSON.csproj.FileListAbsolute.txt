@@ -1,0 +1,5 @@
+C:\Documents and Settings\Kurtis\My Documents\Libraries\Magma\JSON\Magma.JSON.dll
+C:\Documents and Settings\Kurtis\My Documents\Libraries\Magma\JSON\Magma.JSON.pdb
+C:\Documents and Settings\Kurtis\My Documents\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\ResolveAssemblyReference.cache
+C:\Documents and Settings\Kurtis\My Documents\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.dll
+C:\Documents and Settings\Kurtis\My Documents\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.pdb
