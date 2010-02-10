@@ -7,6 +7,9 @@ using System.Collections;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.IO;
+using System.Collections.Specialized;
+using System.Web.UI;
 
 
 namespace System.Web
@@ -26,12 +29,22 @@ namespace System.Web
             return JSON.Serialize(obj);
         }
 
+        public static string EscapeString(string obj)
+        {
+            return obj.Replace("\\", "\\\\").Replace("/", "\\/").Replace("\"", "\\\"")
+                .Replace("\b", "\\b").Replace("\f", "\\f").Replace("\n", "\\n")
+                .Replace("\r", "\\r").Replace("\t", "\\t");
+        }
+
         public static string Serialize(object obj)
         {
             if (obj == null)
                 return "null";
 
             Type type = obj.GetType();
+
+            //Console.Write(type);
+            Debugger.Log(0, "SerializeType", type.ToString());
 
 
             if (type.IsNumeric())
@@ -40,7 +53,7 @@ namespace System.Web
             }
             else if (type == typeof(string) || type == typeof(char))
             {
-                return "\"" + obj + "\"";
+                return "\"" + EscapeString("" + obj) + "\"";
             }
             else if (type == typeof(bool))
             {
@@ -52,7 +65,7 @@ namespace System.Web
             {
                 DateTime dt = (DateTime)obj;
 
-                return "new Date(\"" + dt.ToString("MM/dd/yyyy hh:mm:ss tt") + "\")";
+                return "\"" + dt.ToString("MM/dd/yyyy hh:mm:ss tt") + "\"";
             }
 
             StringBuilder result = new StringBuilder();
@@ -78,14 +91,88 @@ namespace System.Web
 
                 return json;
             }
+            else if (obj is IDictionary)
+            {
+                IDictionary d = (IDictionary)obj;
+                IDictionaryEnumerator i = d.GetEnumerator();
+
+                result.Append("{");
+
+                while (i.MoveNext())
+                {
+                    result.Append("\"" + i.Key + "\":");
+                    result.Append(i.Value.ToJSON());
+                    result.Append(",");
+                }
+
+                string json = result.ToString();
+
+                if (json.EndsWith(","))
+                    json = json.Substring(0, json.Length - 1);
+
+                json += "}";
+
+                return json;
+            }
+            else if (obj is NameValueCollection)
+            {
+                NameValueCollection col = (NameValueCollection)obj;
+
+                result.Append("{");
+
+                for (int i = 0; i < col.Count; i++)
+                {
+                    string key = col.Keys[i];
+                    string value = col[key];
+
+                    result.Append("\"" + key + "\":");
+                    result.Append(value.ToJSON());
+                    result.Append(",");
+                }
+
+                string json = result.ToString();
+
+                if (json.EndsWith(","))
+                    json = json.Substring(0, json.Length - 1);
+
+                json += "}";
+
+                return json;
+            }
+            else if (obj is IEnumerable)
+            {
+                IEnumerable item = (IEnumerable)obj;
+                IEnumerator i = item.GetEnumerator();
+
+                result.Append("[");
+
+                while (i.MoveNext())
+                {
+                    result.Append(i.Current.ToJSON() + ",");
+                }
+
+                string json = result.ToString();
+
+                if (json.EndsWith(","))
+                    json = json.Substring(0, json.Length - 1);
+
+                json += "]";
+
+                return json;
+
+            }
             else
             {
                 result.Append("{");
 
                 PropertyInfo[] props = obj.GetType().GetProperties();
 
+
                 foreach (PropertyInfo prop in props)
                 {
+                    if (IgnoreProperty(prop))
+                        continue;
+
                     object value = prop.GetValue(obj, null);
 
                     result.Append("\"" + prop.Name + "\":");
@@ -104,6 +191,27 @@ namespace System.Web
             }
         }
 
+        private static bool IgnoreProperty(PropertyInfo prop)
+        {
+            if (prop.GetIndexParameters().Length > 0)
+                return true;
+
+            string Namespace = prop.PropertyType.Namespace;
+
+            if (Namespace != null && (Namespace.StartsWith("System.Reflection") || Namespace.StartsWith("System.Security")))
+                return true;
+
+            Type[] ignoredTypes = new Type[] { typeof(Type), typeof(HtmlTextWriter), typeof(TextWriter), typeof(Stream) };
+
+            foreach (Type type in ignoredTypes)
+            {
+                if (prop.PropertyType == type || prop.PropertyType.IsSubclassOf(type))
+                    return true;
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Parses a JSON string into the specified object type
         /// </summary>
@@ -120,6 +228,21 @@ namespace System.Web
         private static object Deserialize(object obj, Type type)
         {
             Type t = obj.GetType();
+
+            if (t == typeof(ArrayList))
+            {
+                if (type.IsArray)
+                    type = type.GetElementType();
+
+                ArrayList elems = new ArrayList();
+
+                foreach (object o in (ArrayList)obj)
+                {
+                    elems.Add(Deserialize(o, type));
+                }
+
+                return elems.ToArray(type);
+            }
 
             if (type.IsNumeric())
             {
@@ -149,20 +272,8 @@ namespace System.Web
             if (type == typeof(string))
                 return (string)obj;
 
-            if (t == typeof(ArrayList))
-            {
-                if (type.IsArray)
-                    type = type.GetElementType();
-
-                ArrayList elems = new ArrayList();
-
-                foreach (object o in (ArrayList)obj)
-                {
-                    elems.Add(Deserialize(o, type));
-                }
-
-                return elems.ToArray(type);
-            }
+            if (type == typeof(object))
+                return obj;
 
             if (t == typeof(Hashtable))
             {
@@ -175,7 +286,13 @@ namespace System.Web
                 {
                     object temp = hash[prop.Name];
 
-                    if (temp != null)
+                    if (temp == null)
+                        temp = hash[prop.Name.ToLower()];
+
+                    if (temp == null)
+                        temp = hash[char.ToLower(prop.Name[0]) + prop.Name.Substring(1)];
+
+                    if (temp != null && prop.CanWrite)
                         prop.SetValue(elem, Deserialize(temp, prop.PropertyType), null);
                 }
 
@@ -335,4 +452,3 @@ namespace System.Web
 
     }
 }
-
