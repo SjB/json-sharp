@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Collections;
@@ -10,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Collections.Specialized;
 using System.Web.UI;
+using System.Linq;
 
 
 namespace System.Web
@@ -36,15 +36,19 @@ namespace System.Web
                 .Replace("\r", "\\r").Replace("\t", "\\t");
         }
 
+        public static string UnescapeString(string obj)
+        {
+            return obj.Replace("\\t", "\t").Replace("\\r", "\r").Replace("\\n", "\n")
+                .Replace("\\f", "\f").Replace("\\b", "\b").Replace("\\\"", "\"")
+                .Replace("\\/", "/").Replace("\\\\", "\\");
+        }
+
         public static string Serialize(object obj)
         {
             if (obj == null)
                 return "null";
 
             Type type = obj.GetType();
-
-            //Console.Write(type);
-            Debugger.Log(0, "SerializeType", type.ToString());
 
 
             if (type.IsNumeric())
@@ -221,12 +225,24 @@ namespace System.Web
         public static object Deserialize(string json, Type type)
         {
             object o = Deserialize(json);
-
+            PropertyCache.Clear();
+            ConstructorCache.Clear();
             return Deserialize(o, type);
         }
 
+        public static T Deserialize<T>(string json)
+        {
+            return (T)Deserialize(json, typeof(T));
+        }
+
+        private static Hashtable PropertyCache = new Hashtable();
+        private static Hashtable ConstructorCache = new Hashtable();
+
         private static object Deserialize(object obj, Type type)
         {
+            if (obj == null)
+                return null;
+
             Type t = obj.GetType();
 
             if (t == typeof(ArrayList))
@@ -238,13 +254,56 @@ namespace System.Web
 
                 foreach (object o in (ArrayList)obj)
                 {
-                    elems.Add(Deserialize(o, type));
+                    if (o != null)
+                        elems.Add(Deserialize(o, type));
                 }
 
                 return elems.ToArray(type);
             }
 
-            if (type.IsNumeric())
+            if (t == typeof(Hashtable))
+            {
+                Hashtable hash = (Hashtable)obj;
+                PropertyInfo[] props;
+                ConstructorInfo construct;
+
+                if (PropertyCache.ContainsKey(type))
+                {
+                    props = (PropertyInfo[])PropertyCache[type];
+                    construct = (ConstructorInfo)ConstructorCache[type];
+                }
+                else
+                {
+                    props = type.GetProperties();
+                    PropertyCache.Add(type, props);
+
+                    construct = type.GetConstructor(new Type[] { });
+                    ConstructorCache.Add(type, construct);
+                }
+
+                object elem = construct.Invoke(new object[] { });
+
+                foreach (PropertyInfo prop in props)
+                {
+                    if (!prop.CanWrite)
+                        continue;
+
+                    object temp = hash[prop.Name];
+
+                    if (temp == null)
+                        temp = hash[prop.Name.ToLower()];
+
+                    if (temp == null)
+                        temp = hash[char.ToLower(prop.Name[0]) + prop.Name.Substring(1)];
+
+                    if (temp != null)
+                        prop.SetValue(elem, Deserialize(temp, prop.PropertyType), null);
+                }
+
+                return elem;
+            }
+
+            if (obj is double)
             {
                 double val = (double)obj;
 
@@ -260,8 +319,10 @@ namespace System.Web
                     return (double)val;
                 else if (type == typeof(float))
                     return (float)val;
-
-                return val;
+                else if (type == typeof(byte))
+                    return (byte)val;
+                else
+                    return val;
             }
 
             if (type == typeof(bool))
@@ -270,185 +331,489 @@ namespace System.Web
             }
 
             if (type == typeof(string))
-                return (string)obj;
+                return obj.ToString();
+
+            if (type == typeof(DateTime))
+            {
+                if (obj is DateTime)
+                    return (DateTime)obj;
+                else
+                    return new DateTime(1, 1, 1);
+            }
 
             if (type == typeof(object))
                 return obj;
 
-            if (t == typeof(Hashtable))
-            {
-                Hashtable hash = (Hashtable)obj;
-                PropertyInfo[] props = type.GetProperties();
-
-                object elem = type.GetConstructor(new Type[] { }).Invoke(new object[] { });
-
-                foreach (PropertyInfo prop in props)
-                {
-                    object temp = hash[prop.Name];
-
-                    if (temp == null)
-                        temp = hash[prop.Name.ToLower()];
-
-                    if (temp == null)
-                        temp = hash[char.ToLower(prop.Name[0]) + prop.Name.Substring(1)];
-
-                    if (temp != null && prop.CanWrite)
-                        prop.SetValue(elem, Deserialize(temp, prop.PropertyType), null);
-                }
-
-                return elem;
-            }
-
             return null;
         }
 
-        /// <summary>
-        /// Deserialize a JSON string into a generic collection
-        /// </summary>
-        /// <param name="json"></param>
-        /// <returns>Hashtable, Arraylist, string, double, or bool</returns>
+        private static double outDouble = 0;
+
         public static object Deserialize(string json)
         {
-            json = json.Trim();
+            JSONDeserializer jd = new JSONDeserializer(json);
+            return jd.Deserialize();
+        }
 
-            if (json == "true")
-                return true;
+        //This is just a test
+        private class JSONTypeDeserializer
+        {
+            private string json;
+            private Type type;
+            private int index;
 
-            if (json == "false")
-                return false;
-
-            if (json == "null")
-                return null;
-
-            string numRegex = @"-?\d+(\.\d+)?((e|E)(\+|-)?\d+)?";
-            string strRegex = @"""((\\"")|[^""])*""";
-
-            Regex reg_string = new Regex(@"^" + strRegex + "$", RegexOptions.Singleline);
-
-            if (reg_string.IsMatch(json))
-                return json.ChopStart("\"").ChopEnd("\"");
-
-            Regex reg_numeric = new Regex("^" + numRegex + "$");
-
-            if (reg_numeric.IsMatch(json))
-                return double.Parse(json);
-
-            Regex reg_keyval = new Regex(@"^(" + strRegex + @")\s*:\s*(.*)$", RegexOptions.Singleline);
-
-            if (reg_keyval.IsMatch(json))
+            public JSONTypeDeserializer(string json, Type type)
             {
-                Match m = reg_keyval.Match(json);
-
-                return new DictionaryEntry(m.Groups[1].Value.ChopStart("\"").ChopEnd("\""),
-                    Deserialize(m.Groups[4].Value));
+                this.json = json;
+                this.type = type;
             }
 
-            Regex reg_date = new Regex(@"^new Date\((.*?)\)$");
-
-            if (reg_date.IsMatch(json))
+            public object Deserialize()
             {
-                Match m = reg_date.Match(json);
+                index = 0;
 
-                return DateTime.Parse(m.Groups[1].Value.ChopStart("\"").ChopEnd("\""));
-            }
-
-            if (json.StartsWith("["))
-            {
-                return ProcessArray(GetMatchingTokenSubstring('[', ']', json));
-            }
-
-            if (json.StartsWith("{"))
-            {
-                Hashtable hash = new Hashtable();
-                ArrayList items = ProcessArray(GetMatchingTokenSubstring('{', '}', json));
-
-                foreach (object o in items)
+                if (type.IsArray)
                 {
-                    DictionaryEntry entry = (DictionaryEntry)o;
-                    hash.Add(entry.Key, entry.Value);
+                    var t = type.GetElementType();
+                    return ProcessArray(t);
+
+                }
+                else
+                {
+                    return ProcessHash(type);
+                }
+            }
+
+            private object ProcessValue(Type type)
+            {
+                SkipWhitespace();
+
+                if (json[index] == '[')
+                {
+                    if (json == "[]")
+                        return new object[0];
+
+                    return ProcessArray(type);
+                }
+
+                if (json[index] == '{')
+                {
+                    if (json == "{}")
+                    {
+                        ConstructorInfo constructor = type.GetConstructor(new Type[0]);
+
+                        if (constructor != null)
+                            return constructor.Invoke(new object[0]);
+                        else
+                            return null;
+                    }
+
+                    return ProcessHash(type);
+                }
+
+                if (json[index] == '"')
+                {
+                    string val = UnescapeString(ProcessString());
+
+                    DateTime outDate;
+
+                    if (DateTime.TryParse(val, out outDate))
+                    {
+                        return outDate;
+                    }
+
+                    return val;
+                }
+
+                int startIndex = index;
+
+                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index])) index++;
+
+                string jval = json.Substring(startIndex, index - startIndex).Trim();
+
+                if (jval == "true")
+                    return true;
+
+                if (jval == "false")
+                    return false;
+
+                if (jval == "null")
+                    return null;
+
+                if (type == typeof(int))
+                    return int.Parse(jval);
+                else if (type == typeof(short))
+                    return short.Parse(jval);
+                else if (type == typeof(decimal))
+                    return decimal.Parse(jval);
+                else if (type == typeof(long))
+                    return long.Parse(jval);
+                else if (type == typeof(double))
+                    return double.Parse(jval);
+                else if (type == typeof(float))
+                    return float.Parse(jval);
+
+                return null;
+            }
+
+            private object[] ProcessArray(Type type)
+            {
+                index++;
+
+                List<object> list = new List<object>();
+
+                while (true)
+                {
+                    SkipWhitespace();
+
+                    list.Add(ProcessValue(type));
+
+                    if (!MoveNext())
+                        break;
+                }
+
+                return list.ToArray();
+            }
+
+            private object ProcessHash(Type type)
+            {
+                ConstructorInfo constructor = type.GetConstructor(new Type[0]);
+
+                object obj;
+
+                if (constructor != null)
+                    obj = constructor.Invoke(new object[0]);
+                else
+                    return null;
+
+                index++;
+
+                PropertyInfo[] props = type.GetProperties();
+
+                Type t;
+
+                while (true)
+                {
+                    SkipWhitespace();
+
+                    string key = ProcessHashKey().Trim();
+                    SkipWhitespace();
+
+                    PropertyInfo prop = props.FirstOrDefault(c => c.Name == key);
+
+                    if (prop == null)
+                        prop = props.FirstOrDefault(c => c.Name.ToLower() == key.ToLower());
+
+                    if (prop == null)
+                        t = typeof(object);
+                    else
+                        t = prop.PropertyType;
+
+                    object value = ProcessValue(t);
+
+                    prop.SetValue(obj, value, null);
+
+                    if (!MoveNext())
+                        break;
+                }
+
+                return obj;
+            }
+
+            private bool MoveNext()
+            {
+                while (index < json.Length && json[index] != ',' &&
+                    json[index] != ']' && json[index] != '}') index++;
+
+                if (index >= json.Length)
+                    return false;
+
+                if (json[index] == ']' || json[index] == '}')
+                {
+                    index++;
+                    return false;
+                }
+
+                index++;
+
+                SkipWhitespace();
+
+                if (index >= json.Length)
+                    return false;
+
+                return true;
+            }
+
+            private void SkipWhitespace()
+            {
+                while (index < json.Length && Char.IsWhiteSpace(json[index])) index++;
+            }
+
+            private string ProcessHashKey()
+            {
+                int startIndex = index;
+                while (json[index++] != ':') ;
+                string result = json.Substring(startIndex, index - startIndex - 1).Trim();
+                result = result.ChopStart("\"").ChopEnd("\"");
+                return result;
+            }
+
+            private string ProcessString()
+            {
+                int startIndex = index;
+                StringBuilder result = new StringBuilder();
+
+                while (true)
+                {
+                    index++;
+
+                    while (json[index] != '"')
+                    {
+                        result.Append(json[index]);
+                        index++;
+                    }
+
+                    int j = index - 1;
+                    int count = 0;
+
+                    while (json[j] == '\\')
+                    {
+                        j--;
+                        count++;
+                    }
+
+                    //if there are an even number of backslashes, 
+                    //then they are all just backslashes and they aren't escaping the quote
+                    //otherwise, the quote is being escaped and we need to keep searching for the close quote
+                    if (count % 2 == 0)
+                        break;
+                    else
+                        result.Append(json[index]);
+                }
+
+                return result.ToString();
+            }
+
+
+        }
+
+        private class JSONDeserializer
+        {
+            private string json;
+            private int index;
+
+            public JSONDeserializer(string JSON)
+            {
+                index = 0;
+                json = JSON;
+            }
+
+            public object Deserialize()
+            {
+                index = 0;
+                return ProcessValue();
+            }
+
+            private object ProcessValue()
+            {
+                SkipWhitespace();
+
+                if (json[index] == '[')
+                {
+                    if (json == "[]")
+                        return new ArrayList();
+
+                    return ProcessArray();
+                }
+
+                if (json[index] == '{')
+                {
+                    if (json == "{}")
+                        return new Hashtable();
+
+                    return ProcessHash();
+                }
+
+                if (json[index] == '"')
+                {
+                    string val = UnescapeString(ProcessString());
+
+                    DateTime outDate;
+
+                    if (DateTime.TryParse(val, out outDate))
+                    {
+                        return outDate;
+                    }
+
+                    return val;
+                }
+
+                int startIndex = index;
+
+                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index])) index++;
+
+                string jval = json.Substring(startIndex, index - startIndex).Trim();
+
+                if (jval == "true")
+                    return true;
+
+                if (jval == "false")
+                    return false;
+
+                if (jval == "null")
+                    return null;
+
+                if (double.TryParse(jval, out outDouble))
+                    return outDouble;
+
+                return null;
+            }
+
+            private ArrayList ProcessArray()
+            {
+                index++;
+
+                ArrayList list = new ArrayList();
+
+                while (true)
+                {
+                    SkipWhitespace();
+
+                    list.Add(ProcessValue());
+
+                    if (!MoveNext())
+                        break;
+                }
+
+                return list;
+            }
+
+            private Hashtable ProcessHash()
+            {
+                index++;
+
+                Hashtable hash = new Hashtable();
+
+                while (true)
+                {
+                    SkipWhitespace();
+
+                    string key = ProcessHashKey().Trim();
+
+                    SkipWhitespace();
+
+                    object value = ProcessValue();
+
+                    hash.Add(key, value);
+
+                    if (!MoveNext())
+                        break;
                 }
 
                 return hash;
             }
 
-            return null;
-        }
-
-        private static ArrayList ProcessArray(string json)
-        {
-            ArrayList list = new ArrayList();
-            json = json.Trim();
-
-            if (GetMatchingTokenSubstring('[', ']', json).Length == json.Length - 2)
-                json = json.ChopStart("[").ChopEnd("]");
-
-            int countA = 0; //[]
-            int countB = 0; //{}
-            bool inString = false;
-
-            for (int i = 0; i < json.Length; i++)
+            private bool MoveNext()
             {
-                if (json[i] == ',' && countA == 0 && countB == 0 && !inString)
+                while (index < json.Length && json[index] != ',' &&
+                    json[index] != ']' && json[index] != '}') index++;
+
+                if (index >= json.Length)
+                    return false;
+
+                if (json[index] == ']' || json[index] == '}')
                 {
-                    string item = json.Substring(0, i);
-                    list.Add(Deserialize(item));
-                    json = json.ChopStart(item).ChopStart(",");
-                    i = -1;
-                    continue;
+                    index++;
+                    return false;
                 }
 
-                if (!inString)
+                index++;
+
+                SkipWhitespace();
+
+                if (index >= json.Length)
+                    return false;
+
+                return true;
+            }
+
+            private void SkipWhitespace()
+            {
+                while (index < json.Length && Char.IsWhiteSpace(json[index])) index++;
+            }
+
+            private string ProcessHashKey()
+            {
+                int startIndex = index;
+                while (json[index++] != ':') ;
+                string result = json.Substring(startIndex, index - startIndex - 1).Trim();
+                result = result.ChopStart("\"").ChopEnd("\"");
+                return result;
+            }
+
+            private string ProcessString()
+            {
+                int startIndex = index;
+                StringBuilder result = new StringBuilder();
+
+                while (true)
                 {
-                    switch (json[i])
+                    index++;
+
+                    while (json[index] != '"')
                     {
-                        case '[': countA++; break;
-                        case ']': countA--; break;
-                        case '{': countB++; break;
-                        case '}': countB--; break;
+                        result.Append(json[index]);
+                        index++;
                     }
+
+                    int j = index - 1;
+                    int count = 0;
+
+                    while (json[j] == '\\')
+                    {
+                        j--;
+                        count++;
+                    }
+
+                    //if there are an even number of backslashes, 
+                    //then they are all just backslashes and they aren't escaping the quote
+                    //otherwise, the quote is being escaped and we need to keep searching for the close quote
+                    if (count % 2 == 0)
+                        break;
+                    else
+                        result.Append(json[index]);
                 }
 
-                if (json[i] == '"' && (i == 0 || json[i - 1] != '\\'))
-                    inString = !inString;
+                return result.ToString();
             }
 
-            list.Add(Deserialize(json));
-
-            return list;
         }
 
-        private static string GetMatchingTokenSubstring(char startToken, char endToken, string json)
+        private static string ChopStart(this string str, string x)
         {
-            if (!json.StartsWith("" + startToken))
-                return json;
+            if (str.StartsWith(x))
+                return str.Substring(x.Length);
 
-            bool inString = false;
-
-            int found = 0;
-            int i = 0;
-            for (i = 0; i < json.Length; i++)
-            {
-                if (!inString)
-                {
-                    if (json[i] == startToken)
-                        found++;
-                    else if (json[i] == endToken)
-                        found--;
-                }
-
-                if (json[i] == '"' && (i == 0 || json[i - 1] != '\\'))
-                    inString = !inString;
-
-                if (found == 0)
-                    break;
-            }
-
-            if (found == 0)
-                return json.Substring(1, i - 1);
-
-            return "";
-
+            return str;
         }
+
+        private static string ChopEnd(this string str, string x)
+        {
+            if (str.EndsWith(x))
+                return str.Substring(0, str.Length - x.Length);
+
+            return str;
+        }
+
+        private static bool IsNumeric(this Type type)
+        {
+            Type[] types = new Type[]{
+                typeof(int), typeof(short), typeof(long),
+                typeof(double), typeof(decimal), typeof(byte)};
+
+            return types.Contains(type);
+        }
+
 
     }
 }
