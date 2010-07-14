@@ -10,3 +10,6 @@ G:\Code\Libraries\Magma\JSON\Magma.JSON.pdb
 G:\Code\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\ResolveAssemblyReference.cache
 G:\Code\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.dll
 G:\Code\Visual Studio 2008\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.pdb
+G:\Code\Visual Studio\Projects\MagmaSoftware\Magma.JSON\obj\Release\ResolveAssemblyReference.cache
+G:\Code\Visual Studio\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.dll
+G:\Code\Visual Studio\Projects\MagmaSoftware\Magma.JSON\obj\Release\Magma.JSON.pdb

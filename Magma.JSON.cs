@@ -29,6 +29,7 @@ namespace System.Web
             return JSON.Serialize(obj);
         }
 
+
         public static string EscapeString(string obj)
         {
             return obj.Replace("\\", "\\\\").Replace("/", "\\/").Replace("\"", "\\\"")
@@ -38,9 +39,13 @@ namespace System.Web
 
         public static string UnescapeString(string obj)
         {
+            if (!obj.Contains("\\"))
+                return obj;
+
             return obj.Replace("\\t", "\t").Replace("\\r", "\r").Replace("\\n", "\n")
                 .Replace("\\f", "\f").Replace("\\b", "\b").Replace("\\\"", "\"")
                 .Replace("\\/", "/").Replace("\\\\", "\\");
+            
         }
 
         public static string Serialize(object obj)
@@ -237,6 +242,7 @@ namespace System.Web
 
         private static Hashtable PropertyCache = new Hashtable();
         private static Hashtable ConstructorCache = new Hashtable();
+        private static Hashtable PropCanWrite = new Hashtable();
 
         private static object Deserialize(object obj, Type type)
         {
@@ -335,8 +341,10 @@ namespace System.Web
 
             if (type == typeof(DateTime))
             {
-                if (obj is DateTime)
-                    return (DateTime)obj;
+                DateTime outdt;
+
+                if (DateTime.TryParse(obj.ToString(), out outdt))
+                    return outdt;
                 else
                     return new DateTime(1, 1, 1);
             }
@@ -611,13 +619,12 @@ namespace System.Web
             public object Deserialize()
             {
                 index = 0;
+                SkipWhitespace();
                 return ProcessValue();
             }
 
             private object ProcessValue()
             {
-                SkipWhitespace();
-
                 if (json[index] == '[')
                 {
                     if (json == "[]")
@@ -628,7 +635,7 @@ namespace System.Web
 
                 if (json[index] == '{')
                 {
-                    if (json == "{}")
+                    if (json[index + 1] == '}')
                         return new Hashtable();
 
                     return ProcessHash();
@@ -638,12 +645,12 @@ namespace System.Web
                 {
                     string val = UnescapeString(ProcessString());
 
-                    DateTime outDate;
+                    //DateTime outDate;
 
-                    if (DateTime.TryParse(val, out outDate))
-                    {
-                        return outDate;
-                    }
+                    //if (DateTime.TryParse(val, out outDate))
+                    //{
+                    //    return outDate;
+                    //}
 
                     return val;
                 }
@@ -652,7 +659,7 @@ namespace System.Web
 
                 while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index])) index++;
 
-                string jval = json.Substring(startIndex, index - startIndex).Trim();
+                string jval = json.Substring(startIndex, index - startIndex);
 
                 if (jval == "true")
                     return true;
@@ -675,9 +682,10 @@ namespace System.Web
 
                 ArrayList list = new ArrayList();
 
+                SkipWhitespace();
+
                 while (true)
                 {
-                    SkipWhitespace();
 
                     list.Add(ProcessValue());
 
@@ -694,11 +702,12 @@ namespace System.Web
 
                 Hashtable hash = new Hashtable();
 
+                SkipWhitespace();
+
+
                 while (true)
                 {
-                    SkipWhitespace();
-
-                    string key = ProcessHashKey().Trim();
+                    string key = ProcessHashKey();
 
                     SkipWhitespace();
 
@@ -729,7 +738,7 @@ namespace System.Web
 
                 index++;
 
-                SkipWhitespace();
+                SkipWhitespaceEnd();
 
                 if (index >= json.Length)
                     return false;
@@ -737,34 +746,34 @@ namespace System.Web
                 return true;
             }
 
-            private void SkipWhitespace()
+            private void SkipWhitespaceEnd()
             {
                 while (index < json.Length && Char.IsWhiteSpace(json[index])) index++;
             }
 
+            private void SkipWhitespace()
+            {
+                while (Char.IsWhiteSpace(json[index])) index++;
+            }
+
             private string ProcessHashKey()
             {
-                int startIndex = index;
+                int startIndex = index + 1;
                 while (json[index++] != ':') ;
-                string result = json.Substring(startIndex, index - startIndex - 1).Trim();
-                result = result.ChopStart("\"").ChopEnd("\"");
+                string result = json.Substring(startIndex, index - startIndex - 2).TrimEnd();
                 return result;
             }
 
             private string ProcessString()
             {
-                int startIndex = index;
-                StringBuilder result = new StringBuilder();
+                int startIndex = index + 1;
 
                 while (true)
                 {
                     index++;
 
                     while (json[index] != '"')
-                    {
-                        result.Append(json[index]);
                         index++;
-                    }
 
                     int j = index - 1;
                     int count = 0;
@@ -780,11 +789,9 @@ namespace System.Web
                     //otherwise, the quote is being escaped and we need to keep searching for the close quote
                     if (count % 2 == 0)
                         break;
-                    else
-                        result.Append(json[index]);
                 }
 
-                return result.ToString();
+                return json.Substring(startIndex, index - startIndex);
             }
 
         }
