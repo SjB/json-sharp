@@ -14,6 +14,17 @@ using System.Linq;
 
 namespace System.Web
 {
+    public enum JSONSerializationMode
+    {
+        /// <summary>
+        /// Slower, but takes advantage of overriden ToJSON methods
+        /// </summary>
+        UseReflection,
+        /// <summary>
+        /// Faster, but ignores overriden ToJSON methods
+        /// </summary>
+        NoReflection
+    };
     /// <summary>
     /// This class encodes and decodes JSON strings.
     /// Spec. details, see http://www.json.org/
@@ -21,12 +32,34 @@ namespace System.Web
     public static class JSON
     {
         /// <summary>
-        /// Converts the public Properties of any object to a JSON-encoded string.
+        /// Converts the public Properties of any object to a JSON-encoded string. Uses reflection to take advantaget of overridden ToJSON methods
         /// </summary>
         /// <returns>JSON-encoded string</returns>
         public static string ToJSON(this object obj)
         {
-            return JSON.Serialize(obj);
+            if (obj == null)
+                return "null";
+
+            return obj.ToJSON(JSONSerializationMode.UseReflection);
+        }
+
+        public static string ToJSON(this object obj, JSONSerializationMode mode)
+        {
+            if (obj == null)
+                return "null";
+
+            if (mode == JSONSerializationMode.UseReflection)
+            {
+                Type type = obj.GetType();
+                MethodInfo[] methods = type.GetMethods();
+                methods = methods.Where(c => c.Name == "ToJSON" && c.ReturnType == typeof(string)).ToArray();
+                MethodInfo method = methods.SingleOrDefault(c => c.DeclaringType == type && c.GetParameters().Length == 0);
+
+                if (method != null)
+                    return (string)method.Invoke(obj, new object[0]);
+            }
+
+            return JSON.Serialize(obj, mode);
         }
 
 
@@ -45,16 +78,20 @@ namespace System.Web
             return obj.Replace("\\t", "\t").Replace("\\r", "\r").Replace("\\n", "\n")
                 .Replace("\\f", "\f").Replace("\\b", "\b").Replace("\\\"", "\"")
                 .Replace("\\/", "/").Replace("\\\\", "\\");
-            
+
         }
 
         public static string Serialize(object obj)
+        {
+            return Serialize(obj, JSONSerializationMode.UseReflection);
+        }
+
+        public static string Serialize(object obj, JSONSerializationMode mode)
         {
             if (obj == null)
                 return "null";
 
             Type type = obj.GetType();
-
 
             if (type.IsNumeric())
             {
@@ -79,7 +116,6 @@ namespace System.Web
 
             StringBuilder result = new StringBuilder();
 
-
             if (obj.GetType().IsArray)
             {
                 result.Append("[");
@@ -88,7 +124,7 @@ namespace System.Web
 
                 foreach (object value in array)
                 {
-                    result.Append(value.ToJSON() + ",");
+                    result.Append(value.ToJSON(mode) + ",");
                 }
 
                 string json = result.ToString();
@@ -110,7 +146,7 @@ namespace System.Web
                 while (i.MoveNext())
                 {
                     result.Append("\"" + i.Key + "\":");
-                    result.Append(i.Value.ToJSON());
+                    result.Append(i.Value.ToJSON(mode));
                     result.Append(",");
                 }
 
@@ -135,7 +171,7 @@ namespace System.Web
                     string value = col[key];
 
                     result.Append("\"" + key + "\":");
-                    result.Append(value.ToJSON());
+                    result.Append(value.ToJSON(mode));
                     result.Append(",");
                 }
 
@@ -157,7 +193,7 @@ namespace System.Web
 
                 while (i.MoveNext())
                 {
-                    result.Append(i.Current.ToJSON() + ",");
+                    result.Append(i.Current.ToJSON(mode) + ",");
                 }
 
                 string json = result.ToString();
@@ -185,7 +221,7 @@ namespace System.Web
                     object value = prop.GetValue(obj, null);
 
                     result.Append("\"" + prop.Name + "\":");
-                    result.Append(prop.GetValue(obj, null).ToJSON());
+                    result.Append(prop.GetValue(obj, null).ToJSON(mode));
                     result.Append(",");
                 }
 
@@ -435,7 +471,8 @@ namespace System.Web
 
                 int startIndex = index;
 
-                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index])) index++;
+                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index]))
+                    index++;
 
                 string jval = json.Substring(startIndex, index - startIndex).Trim();
 
@@ -531,7 +568,8 @@ namespace System.Web
             private bool MoveNext()
             {
                 while (index < json.Length && json[index] != ',' &&
-                    json[index] != ']' && json[index] != '}') index++;
+                    json[index] != ']' && json[index] != '}')
+                    index++;
 
                 if (index >= json.Length)
                     return false;
@@ -554,13 +592,15 @@ namespace System.Web
 
             private void SkipWhitespace()
             {
-                while (index < json.Length && Char.IsWhiteSpace(json[index])) index++;
+                while (index < json.Length && Char.IsWhiteSpace(json[index]))
+                    index++;
             }
 
             private string ProcessHashKey()
             {
                 int startIndex = index;
-                while (json[index++] != ':') ;
+                while (json[index++] != ':')
+                    ;
                 string result = json.Substring(startIndex, index - startIndex - 1).Trim();
                 result = result.ChopStart("\"").ChopEnd("\"");
                 return result;
@@ -627,17 +667,11 @@ namespace System.Web
             {
                 if (json[index] == '[')
                 {
-                    if (json == "[]")
-                        return new ArrayList();
-
                     return ProcessArray();
                 }
 
                 if (json[index] == '{')
                 {
-                    if (json[index + 1] == '}')
-                        return new Hashtable();
-
                     return ProcessHash();
                 }
 
@@ -657,7 +691,8 @@ namespace System.Web
 
                 int startIndex = index;
 
-                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index])) index++;
+                while (index < json.Length && json[index] != ',' && json[index] != '}' && json[index] != ']' && !Char.IsWhiteSpace(json[index]))
+                    index++;
 
                 string jval = json.Substring(startIndex, index - startIndex);
 
@@ -684,6 +719,12 @@ namespace System.Web
 
                 SkipWhitespace();
 
+                if(json[index] == ']')
+                {
+                    index++;
+                    return list;
+                }
+
                 while (true)
                 {
 
@@ -704,6 +745,11 @@ namespace System.Web
 
                 SkipWhitespace();
 
+                if (json[index] == '}')
+                {
+                    index++;
+                    return hash;
+                }
 
                 while (true)
                 {
@@ -725,7 +771,8 @@ namespace System.Web
             private bool MoveNext()
             {
                 while (index < json.Length && json[index] != ',' &&
-                    json[index] != ']' && json[index] != '}') index++;
+                    json[index] != ']' && json[index] != '}')
+                    index++;
 
                 if (index >= json.Length)
                     return false;
@@ -748,18 +795,21 @@ namespace System.Web
 
             private void SkipWhitespaceEnd()
             {
-                while (index < json.Length && Char.IsWhiteSpace(json[index])) index++;
+                while (index < json.Length && Char.IsWhiteSpace(json[index]))
+                    index++;
             }
 
             private void SkipWhitespace()
             {
-                while (Char.IsWhiteSpace(json[index])) index++;
+                while (Char.IsWhiteSpace(json[index]))
+                    index++;
             }
 
             private string ProcessHashKey()
             {
                 int startIndex = index + 1;
-                while (json[index++] != ':') ;
+                while (json[index++] != ':')
+                    ;
                 string result = json.Substring(startIndex, index - startIndex - 2).TrimEnd();
                 return result;
             }
