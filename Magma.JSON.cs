@@ -62,7 +62,6 @@ namespace System.Web
             return JSON.Serialize(obj, mode);
         }
 
-
         public static string EscapeString(string obj)
         {
             return obj.Replace("\\", "\\\\").Replace("/", "\\/").Replace("\"", "\\\"")
@@ -317,10 +316,10 @@ namespace System.Web
                 else
                 {
                     props = type.GetProperties();
-                    PropertyCache.Add(type, props);
+                    PropertyCache[type] = props;
 
                     construct = type.GetConstructor(new Type[] { });
-                    ConstructorCache.Add(type, construct);
+                    ConstructorCache[type] = construct;
                 }
 
                 object elem = construct.Invoke(new object[] { });
