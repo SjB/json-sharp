@@ -19,11 +19,15 @@ namespace System.Web
         /// <summary>
         /// Slower, but takes advantage of overriden ToJSON methods
         /// </summary>
-        UseReflection,
+        UseReflection = 1,
         /// <summary>
         /// Faster, but ignores overriden ToJSON methods
         /// </summary>
-        NoReflection
+        NoReflection = 2,
+        /// <summary>
+        /// Not strictly valid json, but is a vaild javascript object
+        /// </summary>
+        JavascriptObject = 4
     };
     /// <summary>
     /// This class encodes and decodes JSON strings.
@@ -37,31 +41,45 @@ namespace System.Web
         /// <returns>JSON-encoded string</returns>
         public static string ToJSON(this object obj)
         {
+            //Check for null value
             if (obj == null)
                 return "null";
 
+            //Call ToJSON method
             return obj.ToJSON(JSONSerializationMode.UseReflection);
         }
 
         public static string ToJSON(this object obj, JSONSerializationMode mode)
         {
+            //Check for null value
             if (obj == null)
                 return "null";
 
-            if (mode == JSONSerializationMode.UseReflection)
+            //Check if reflection should be used
+            if ((mode & JSONSerializationMode.UseReflection) == JSONSerializationMode.UseReflection)
             {
+                //Use Reflection to get methode
                 Type type = obj.GetType();
                 MethodInfo[] methods = type.GetMethods();
+
+                //Check for a ToJSON method
                 methods = methods.Where(c => c.Name == "ToJSON" && c.ReturnType == typeof(string)).ToArray();
                 MethodInfo method = methods.SingleOrDefault(c => c.DeclaringType == type && c.GetParameters().Length == 0);
 
+                //If there is a ToJSON method, call it
                 if (method != null)
                     return (string)method.Invoke(obj, new object[0]);
             }
 
+            //Call Serialize method
             return JSON.Serialize(obj, mode);
         }
 
+        /// <summary>
+        /// Escape a string for JSON encoding
+        /// </summary>
+        /// <param name="obj"></param>
+        /// <returns></returns>
         public static string EscapeString(string obj)
         {
             return obj.Replace("\\", "\\\\").Replace("/", "\\/").Replace("\"", "\\\"")
@@ -69,8 +87,14 @@ namespace System.Web
                 .Replace("\r", "\\r").Replace("\t", "\\t");
         }
 
+        /// <summary>
+        /// Unescape a JSON-encoded string
+        /// </summary>
+        /// <param name="obj"></param>
+        /// <returns></returns>
         public static string UnescapeString(string obj)
         {
+            //if there aren't any \\, then it doesn't need to be unescaped
             if (!obj.Contains("\\"))
                 return obj;
 
@@ -80,11 +104,22 @@ namespace System.Web
 
         }
 
+        /// <summary>
+        /// Turn an object into a JSON-Encoded string
+        /// </summary>
+        /// <param name="obj">The object that needs to be serialized</param>
+        /// <returns></returns>
         public static string Serialize(object obj)
         {
             return Serialize(obj, JSONSerializationMode.UseReflection);
         }
 
+        /// <summary>
+        /// Turn an object into a JSON-Encoded string, optionally setting parameters
+        /// </summary>
+        /// <param name="obj"></param>
+        /// <param name="mode">JSONSerializationModes; can be |'d together</param>
+        /// <returns></returns>
         public static string Serialize(object obj, JSONSerializationMode mode)
         {
             if (obj == null)
@@ -144,7 +179,11 @@ namespace System.Web
 
                 while (i.MoveNext())
                 {
-                    result.Append("\"" + i.Key + "\":");
+                    if((mode & JSONSerializationMode.JavascriptObject) == JSONSerializationMode.JavascriptObject)
+                        result.Append("" + i.Key + ":");
+                    else
+                        result.Append("\"" + i.Key + "\":");
+                    
                     result.Append(i.Value.ToJSON(mode));
                     result.Append(",");
                 }
@@ -169,7 +208,11 @@ namespace System.Web
                     string key = col.Keys[i];
                     string value = col[key];
 
-                    result.Append("\"" + key + "\":");
+                   if((mode & JSONSerializationMode.JavascriptObject) == JSONSerializationMode.JavascriptObject)
+                        result.Append("" + key + ":");
+                    else
+                        result.Append("\"" + key + "\":");
+
                     result.Append(value.ToJSON(mode));
                     result.Append(",");
                 }
@@ -219,7 +262,11 @@ namespace System.Web
 
                     object value = prop.GetValue(obj, null);
 
-                    result.Append("\"" + prop.Name + "\":");
+                    if((mode & JSONSerializationMode.JavascriptObject) == JSONSerializationMode.JavascriptObject)
+                        result.Append("" + prop.Name + ":");
+                    else
+                        result.Append("\"" + prop.Name + "\":");
+
                     result.Append(prop.GetValue(obj, null).ToJSON(mode));
                     result.Append(",");
                 }
@@ -235,6 +282,11 @@ namespace System.Web
             }
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="prop"></param>
+        /// <returns></returns>
         private static bool IgnoreProperty(PropertyInfo prop)
         {
             if (prop.GetIndexParameters().Length > 0)
@@ -264,20 +316,34 @@ namespace System.Web
         /// <returns>Object of type Type</returns>
         public static object Deserialize(string json, Type type)
         {
+            //Deserialize the json into a generic object
             object o = Deserialize(json);
+
+            //Clear the Reflection caches
             PropertyCache.Clear();
             ConstructorCache.Clear();
+
+            //Convert generic object to the specified Type
             return Deserialize(o, type);
         }
 
+        /// <summary>
+        /// Parses a JSON string into the specified object type
+        /// </summary>
+        /// <typeparam name="T">The object type you want your json string deserialized into</typeparam>
+        /// <param name="json">The JSON-encoded string you want to deserialize</param>
+        /// <returns>Object of type T</returns>
         public static T Deserialize<T>(string json)
         {
             return (T)Deserialize(json, typeof(T));
         }
 
-        private static Hashtable PropertyCache = new Hashtable();
-        private static Hashtable ConstructorCache = new Hashtable();
+        #region Reflection Cache Variables
+        //The following 3 variables are used to mitigate Reflection's performance effects
+        private static Hashtable PropertyCache = new Hashtable(); 
+        private static Hashtable ConstructorCache = new Hashtable(); 
         private static Hashtable PropCanWrite = new Hashtable();
+        #endregion
 
         private static object Deserialize(object obj, Type type)
         {
@@ -392,25 +458,41 @@ namespace System.Web
 
         private static double outDouble = 0;
 
+        /// <summary>
+        /// Converts a JSON-Encoded string into a generic object
+        /// </summary>
+        /// <param name="json"></param>
+        /// <returns>Either a Hashtable (json object) or an ArrayList (json array) in an object variable</returns>
         public static object Deserialize(string json)
         {
             JSONDeserializer jd = new JSONDeserializer(json);
             return jd.Deserialize();
         }
 
-        //This is just a test
+        /// <summary>
+        /// 
+        /// </summary>
         private class JSONTypeDeserializer
         {
             private string json;
             private Type type;
             private int index;
 
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="json"></param>
+            /// <param name="type"></param>
             public JSONTypeDeserializer(string json, Type type)
             {
                 this.json = json;
                 this.type = type;
             }
 
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <returns></returns>
             public object Deserialize()
             {
                 index = 0;
@@ -427,6 +509,11 @@ namespace System.Web
                 }
             }
 
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns></returns>
             private object ProcessValue(Type type)
             {
                 SkipWhitespace();
@@ -500,6 +587,11 @@ namespace System.Web
                 return null;
             }
 
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns></returns>
             private object[] ProcessArray(Type type)
             {
                 index++;
@@ -519,6 +611,11 @@ namespace System.Web
                 return list.ToArray();
             }
 
+            /// <summary>
+            /// Converts a JSON object to an object of type 'type'
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns></returns>
             private object ProcessHash(Type type)
             {
                 ConstructorInfo constructor = type.GetConstructor(new Type[0]);
@@ -564,6 +661,10 @@ namespace System.Web
                 return obj;
             }
 
+            /// <summary>
+            /// Moves to the next token
+            /// </summary>
+            /// <returns>False if it's the end of the json data</returns>
             private bool MoveNext()
             {
                 while (index < json.Length && json[index] != ',' &&
@@ -589,12 +690,19 @@ namespace System.Web
                 return true;
             }
 
+            /// <summary>
+            /// Skips whitespace
+            /// </summary>
             private void SkipWhitespace()
             {
                 while (index < json.Length && Char.IsWhiteSpace(json[index]))
                     index++;
             }
 
+            /// <summary>
+            /// Gets the key name for a json object
+            /// </summary>
+            /// <returns></returns>
             private string ProcessHashKey()
             {
                 int startIndex = index;
@@ -605,6 +713,10 @@ namespace System.Web
                 return result;
             }
 
+            /// <summary>
+            /// Reads the next JSON string
+            /// </summary>
+            /// <returns></returns>
             private string ProcessString()
             {
                 int startIndex = index;
@@ -644,17 +756,28 @@ namespace System.Web
 
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
         private class JSONDeserializer
         {
             private string json;
             private int index;
 
+            /// <summary>
+            /// 
+            /// </summary>
+            /// <param name="JSON"></param>
             public JSONDeserializer(string JSON)
             {
                 index = 0;
                 json = JSON;
             }
 
+            /// <summary>
+            /// Starts the Deserialize process
+            /// </summary>
+            /// <returns></returns>
             public object Deserialize()
             {
                 index = 0;
@@ -662,6 +785,10 @@ namespace System.Web
                 return ProcessValue();
             }
 
+            /// <summary>
+            /// Processes the next token
+            /// </summary>
+            /// <returns></returns>
             private object ProcessValue()
             {
                 if (json[index] == '[')
@@ -710,6 +837,10 @@ namespace System.Web
                 return null;
             }
 
+            /// <summary>
+            /// Processes the next JSON Array 
+            /// </summary>
+            /// <returns></returns>
             private ArrayList ProcessArray()
             {
                 index++;
@@ -736,6 +867,10 @@ namespace System.Web
                 return list;
             }
 
+            /// <summary>
+            /// Processes a JSON object
+            /// </summary>
+            /// <returns></returns>
             private Hashtable ProcessHash()
             {
                 index++;
@@ -767,6 +902,10 @@ namespace System.Web
                 return hash;
             }
 
+            /// <summary>
+            /// Moves to the next token
+            /// </summary>
+            /// <returns>false if it's the end of the json string</returns>
             private bool MoveNext()
             {
                 while (index < json.Length && json[index] != ',' &&
@@ -792,18 +931,28 @@ namespace System.Web
                 return true;
             }
 
+            /// <summary>
+            /// Skips the next whitespace, checking for the end of file
+            /// </summary>
             private void SkipWhitespaceEnd()
             {
                 while (index < json.Length && Char.IsWhiteSpace(json[index]))
                     index++;
             }
 
+            /// <summary>
+            /// Skips the next whitespace, not expecting an end of file
+            /// </summary>
             private void SkipWhitespace()
             {
                 while (Char.IsWhiteSpace(json[index]))
                     index++;
             }
 
+            /// <summary>
+            /// Reads the next object key
+            /// </summary>
+            /// <returns></returns>
             private string ProcessHashKey()
             {
                 int startIndex = index + 1;
@@ -813,6 +962,10 @@ namespace System.Web
                 return result;
             }
 
+            /// <summary>
+            /// Reads the next string
+            /// </summary>
+            /// <returns></returns>
             private string ProcessString()
             {
                 int startIndex = index + 1;
@@ -845,6 +998,12 @@ namespace System.Web
 
         }
 
+        /// <summary>
+        /// Helper method that chops the beginning of a string starting with X
+        /// </summary>
+        /// <param name="str">The string to chop</param>
+        /// <param name="x">The value that needs to be chopped</param>
+        /// <returns></returns>
         private static string ChopStart(this string str, string x)
         {
             if (str.StartsWith(x))
@@ -853,6 +1012,12 @@ namespace System.Web
             return str;
         }
 
+        /// <summary>
+        /// Helper method that chops the beginning of a string starting with X
+        /// </summary>
+        /// <param name="str">The string to chop</param>
+        /// <param name="x">The value that needs to be chopped</param>
+        /// <returns></returns>
         private static string ChopEnd(this string str, string x)
         {
             if (str.EndsWith(x))
@@ -861,6 +1026,11 @@ namespace System.Web
             return str;
         }
 
+        /// <summary>
+        /// Checks if a type is numeric
+        /// </summary>
+        /// <param name="type">The type to check</param>
+        /// <returns>true if the type is a numeric type</returns>
         private static bool IsNumeric(this Type type)
         {
             Type[] types = new Type[]{
