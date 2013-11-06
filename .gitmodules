@@ -1,0 +1,3 @@
+[submodule "waftools/sjb-waftools"]
+	path = waftools/sjb-waftools
+	url = git@github.com:SjB/waftools.git
