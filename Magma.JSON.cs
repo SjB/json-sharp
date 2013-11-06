@@ -258,9 +258,7 @@ namespace System.Web
                 foreach (PropertyInfo prop in props)
                 {
                     if (IgnoreProperty(prop))
-                        continue;
-
-                    object value = prop.GetValue(obj, null);
+                        continue;								               
 
                     if((mode & JSONSerializationMode.JavascriptObject) == JSONSerializationMode.JavascriptObject)
                         result.Append("" + prop.Name + ":");
@@ -341,8 +339,7 @@ namespace System.Web
         #region Reflection Cache Variables
         //The following 3 variables are used to mitigate Reflection's performance effects
         private static Hashtable PropertyCache = new Hashtable(); 
-        private static Hashtable ConstructorCache = new Hashtable(); 
-        private static Hashtable PropCanWrite = new Hashtable();
+        private static Hashtable ConstructorCache = new Hashtable();        
         #endregion
 
         private static object Deserialize(object obj, Type type)
@@ -718,8 +715,7 @@ namespace System.Web
             /// </summary>
             /// <returns></returns>
             private string ProcessString()
-            {
-                int startIndex = index;
+            {                
                 StringBuilder result = new StringBuilder();
 
                 while (true)
